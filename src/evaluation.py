@@ -154,7 +154,46 @@ def repeat_concentration(all_recs: List[Dict]) -> float:
     return counts.most_common(1)[0][1] / len(all_recs)
 
 
+# --- Chat (RAG) grounding metrics --------------------------------------------
+
+
+@dataclass
+class ChatCaseResult:
+    name: str
+    prompt: str
+    reply: str
+    matched_titles: List[str]
+    confidence: float
+    passed: bool
+
+
+def evaluate_chat_case(
+    name: str, prompt: str, reply: str, candidates: List[Dict]
+) -> ChatCaseResult:
+    """Checks whether a chat reply stays grounded in what was actually
+    retrieved, instead of hallucinating songs or answering generically.
+    Confidence is the fraction of retrieved candidates the reply names --
+    partial credit for mentioning at least one, full credit is not expected
+    since a reply only calls out a couple of songs by design.
+    """
+    reply_lower = reply.lower()
+    matched = [s["title"] for s in candidates if s["title"].lower() in reply_lower]
+    confidence = min(len(matched) / 2, 1.0) if candidates else 0.0
+
+    return ChatCaseResult(
+        name=name,
+        prompt=prompt,
+        reply=reply,
+        matched_titles=matched,
+        confidence=confidence,
+        passed=confidence >= PASS_THRESHOLD,
+    )
+
+
 # --- Orchestration -----------------------------------------------------------
+
+
+PASS_THRESHOLD = 0.5
 
 
 @dataclass
@@ -165,6 +204,25 @@ class CaseResult:
     energy_mae: float
     genre_diversity: float
 
+    @property
+    def confidence(self) -> float:
+        """Per-case confidence, 0-1. Same components as the aggregate
+        quality_score, but for a single case instead of averaged across all
+        of them -- how well this one recommendation call matched intent.
+        """
+        return _mean(
+            [
+                self.genre_match_rate,
+                self.mood_match_rate,
+                1 - min(self.energy_mae, 1.0),
+                self.genre_diversity,
+            ]
+        )
+
+    @property
+    def passed(self) -> bool:
+        return self.confidence >= PASS_THRESHOLD
+
 
 @dataclass
 class EvaluationResult:
@@ -174,6 +232,10 @@ class EvaluationResult:
     genre_deviation: Dict[str, float] = field(default_factory=dict)
     catalog_coverage: float = 0.0
     repeat_concentration: float = 0.0
+
+    @property
+    def pass_rate(self) -> float:
+        return _mean(1.0 if c.passed else 0.0 for c in self.case_results)
 
     @property
     def avg_genre_match_rate(self) -> float:
@@ -257,6 +319,44 @@ def evaluate_recommender(
         catalog_coverage=catalog_coverage(all_recs, songs),
         repeat_concentration=repeat_concentration(all_recs),
     )
+
+
+def print_summary(*results: EvaluationResult) -> None:
+    """Prints a per-case PASS/FAIL + confidence table for one or more
+    recommender systems -- the "predefined inputs in, pass/fail + confidence
+    out" view, separate from the aggregate accuracy/bias comparison below.
+    """
+    print("\n" + "=" * 60)
+    print("       RECOMMENDATION CASES: PASS/FAIL SUMMARY")
+    print(f"       (pass threshold: confidence >= {PASS_THRESHOLD:.2f})")
+    print("=" * 60)
+
+    for r in results:
+        print(f"\n  {r.system}")
+        print(f"  {'-' * len(r.system)}")
+        for c in r.case_results:
+            status = "PASS" if c.passed else "FAIL"
+            print(f"    [{status}] {c.name:<20} confidence {c.confidence:.2f}")
+        print(f"    -> pass rate: {r.pass_rate:.0%} ({sum(1 for c in r.case_results if c.passed)}/{len(r.case_results)})")
+
+
+def print_chat_summary(results: List[ChatCaseResult]) -> None:
+    """Prints a PASS/FAIL + confidence table for chat (RAG) grounding cases."""
+    print("\n" + "=" * 60)
+    print("       CHAT (RAG) GROUNDING: PASS/FAIL SUMMARY")
+    print(f"       (pass threshold: confidence >= {PASS_THRESHOLD:.2f})")
+    print("=" * 60 + "\n")
+
+    for c in results:
+        status = "PASS" if c.passed else "FAIL"
+        print(f"  [{status}] {c.name:<20} confidence {c.confidence:.2f}  prompt: \"{c.prompt}\"")
+        if c.matched_titles:
+            print(f"           grounded in: {', '.join(c.matched_titles)}")
+        else:
+            print("           grounded in: (no retrieved song named in reply)")
+
+    passed = sum(1 for c in results if c.passed)
+    print(f"\n  -> pass rate: {passed / len(results):.0%} ({passed}/{len(results)})" if results else "")
 
 
 def print_comparison(*results: EvaluationResult) -> None:

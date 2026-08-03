@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Tuple
 
 from anthropic import Anthropic
+from anthropic.types import MessageParam
 
 _MODEL = "claude-haiku-4-5"
 
@@ -63,6 +64,45 @@ def generate_explanation(
         model=_MODEL,
         max_tokens=120,
         messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _response_text(response).strip()
+
+
+def chat_reply(history: List[MessageParam], context: str, user_prefs: Dict) -> str:
+    """Generates a conversational reply grounded in retrieved song context
+    and anchored to the user's profile, so the conversation stays on-topic
+    and consistent with their stated taste turn after turn.
+
+    `history` is a list of {"role": "user"|"assistant", "content": str}
+    ending with the latest user message. `context` is a block of retrieved
+    song info (from the embedding index) to ground the answer in.
+    """
+    profile_line = (
+        f"favorite genre: {user_prefs['favorite_genre']}; "
+        f"favorite mood: {user_prefs['favorite_mood']}; "
+        f"target energy: {user_prefs['target_energy']:.2f}; "
+        f"acoustic preference: {'likes acoustic' if user_prefs['likes_acoustic'] else 'prefers non-acoustic'}."
+    )
+
+    system = (
+        "You are WaveTune's music assistant. Stay focused on helping the "
+        "user find and understand music from the catalog -- don't wander "
+        "into unrelated topics. Answer using the catalog excerpts below "
+        "when relevant, recommending specific songs by title and artist "
+        "where it fits. Keep answers consistent with the user's stated "
+        "profile unless they explicitly ask to explore outside it. Be "
+        "concise and conversational. If nothing in the excerpts fits, "
+        "say so.\n\n"
+        f"User's profile -- {profile_line}\n\n"
+        f"Relevant songs:\n{context}"
+    )
+
+    response = _client().messages.create(
+        model=_MODEL,
+        max_tokens=300,
+        system=system,
+        messages=history,
     )
 
     return _response_text(response).strip()

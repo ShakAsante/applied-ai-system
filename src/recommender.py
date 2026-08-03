@@ -191,6 +191,41 @@ def load_songs(csv_path: str) -> List[Dict]:
     return songs
 
 
+_NUMERIC_FIELDS = {"id", "energy", "tempo_bpm", "valence", "danceability", "acousticness"}
+
+
+def load_songs_csv(csv_path: str) -> List[Dict]:
+    """
+    Loads a WaveTune-shaped song CSV, preserving every column.
+
+    Unlike load_songs, this doesn't assume a fixed column set, so it also
+    works for richer catalogs (e.g. data/songs_detailed.csv) that add
+    descriptive fields like themes, tags, and description. Known numeric
+    columns are cast to int/float when present; everything else stays a
+    string.
+
+    Args:
+        csv_path (str): Path to the songs CSV file.
+
+    Returns:
+        List[Dict]: List of songs represented as dictionaries, one per row.
+    """
+
+    songs = []
+
+    with open(csv_path, mode="r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        for row in reader:
+            song = dict(row)
+            for field in _NUMERIC_FIELDS:
+                if field in song:
+                    song[field] = int(song[field]) if field == "id" else float(song[field])
+            songs.append(song)
+
+    return songs
+
+
 def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     """
     Scores a song using modified sensitivity test weights:

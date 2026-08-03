@@ -12,7 +12,31 @@ from sentence_transformers import SentenceTransformer
 _MODEL_NAME = "all-MiniLM-L6-v2"
 
 def describe_song(song: Dict) -> str:
-    """Builds a natural-language description of a song from its fields."""
+    """Builds a natural-language description of a song from its fields.
+
+    Uses the rich descriptive fields (description, themes, tags, best_for)
+    when available -- as in data/songs_detailed.csv -- since they carry far
+    more retrievable meaning than the numeric features alone. Falls back to
+    a synthesized description for catalogs that only have the basic fields.
+    """
+    if "description" in song:
+        parts = [song["description"]]
+
+        moods = song["mood"]
+        if song.get("secondary_moods"):
+            moods += f", {song['secondary_moods']}"
+        parts.append(f"Genre: {song['genre']}. Mood: {moods}.")
+
+        for field, label in [
+            ("themes", "Themes"),
+            ("tags", "Tags"),
+            ("best_for", "Best for"),
+        ]:
+            if song.get(field):
+                parts.append(f"{label}: {song[field]}.")
+
+        return " ".join(parts)
+
     return (
         f"{song['title']} by {song['artist']} is a {song['mood']} {song['genre']} "
         f"track with {song['energy']:.2f} energy, {song['tempo_bpm']:.0f} BPM, "
