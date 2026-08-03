@@ -1,0 +1,66 @@
+flowchart TD
+    CSV[("data/songs.csv")]
+    CSV --> Loader["recommender.load_songs"]
+
+    Loader --> Catalog["Song catalog (List[Dict])"]
+
+    UserInput["User input"]
+    StructInput["Structured profile\n(favorite_genre, favorite_mood,\ntarget_energy, likes_acoustic)"]
+    TextInput["Free-text query\n('moody songs to code to at night')"]
+    UserInput --> StructInput
+    UserInput --> TextInput
+
+    subgraph Heuristic["Heuristic path (recommender.py)"]
+        Scorer["score_song\nrule-based feature scoring"]
+        RankH["recommend_songs\nsort + top-k"]
+        Scorer --> RankH
+    end
+
+    subgraph Agentic["Agentic / RAG path"]
+        Embed["embeddings.SongEmbeddingIndex\nRETRIEVER\n(sentence-transformers)"]
+        Parse["generation.parse_query_to_preferences\nAGENT\n(Claude: text -> structured prefs)"]
+        RetrieveStep["index.query\ntop-N candidates by vibe similarity"]
+        RescoreStep["score_song\nrank candidates on parsed prefs"]
+        Explain["generation.generate_explanation\nAGENT\n(Claude: score -> natural-language reason)"]
+        Orchestrator["rag_recommender.recommend_from_query"]
+
+        Orchestrator --> Embed
+        Orchestrator --> Parse
+        Embed --> RetrieveStep
+        Parse --> RescoreStep
+        RetrieveStep --> RescoreStep
+        RescoreStep --> Explain
+    end
+
+    Catalog --> Scorer
+    Catalog --> Embed
+    StructInput --> Scorer
+    TextInput --> Orchestrator
+
+    RankH --> HeuristicOut["Top-k songs\n+ templated explanation"]
+    Explain --> AgenticOut["Top-k songs\n+ LLM-generated explanation"]
+
+    subgraph Evaluator["Evaluator (evaluation.py / evaluate.py)"]
+        EvalCases["EVAL_CASES\npaired profile + query per scenario"]
+        Metrics["Accuracy metrics\ngenre/mood match rate, energy MAE, diversity"]
+        Bias["Bias metrics\ngenre distribution skew,\ncatalog coverage, repeat concentration"]
+        Compare["print_comparison\nside-by-side quality_score"]
+        EvalCases --> Metrics
+        EvalCases --> Bias
+        Metrics --> Compare
+        Bias --> Compare
+    end
+
+    HeuristicOut --> Metrics
+    AgenticOut --> Metrics
+    Catalog --> Bias
+
+    subgraph Tests["Tester (tests/)"]
+        TestRec["test_recommender.py\nheuristic scoring behavior"]
+        TestEval["test_evaluation.py\nmetric functions, pure/no-API"]
+    end
+
+    RankH -. verified by .-> TestRec
+    Metrics -. verified by .-> TestEval
+
+    Compare --> Report["Comparison report\n(console table + bias flags)"]
